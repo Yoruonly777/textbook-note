@@ -146,7 +146,7 @@
     .result { display: none; margin-top: 22px; }
     .result.show { display: block; }
     .segmented {
-      position: relative; display: grid; grid-template-columns: repeat(3, 1fr);
+      position: relative; display: grid; grid-template-columns: repeat(4, 1fr);
       background: var(--seg-bg); border-radius: 10px; padding: 2px;
       animation: rise 0.6s var(--spring) both;
     }
@@ -160,7 +160,7 @@
     .segmented button.active { font-weight: 600; }
     .seg-pill {
       position: absolute; top: 2px; bottom: 2px; left: 2px;
-      width: calc((100% - 4px) / 3);
+      width: calc((100% - 4px) / 4);
       background: var(--seg-pill); border-radius: 8px;
       box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
       transition: transform 0.45s var(--spring);
@@ -189,6 +189,35 @@
       background: linear-gradient(transparent 55%, rgba(255, 204, 0, 0.45) 55%);
       border-radius: 2px;
     }
+    /* 필기 탭: 필기 원문 + 종류 배지 + 위치 + 보충 설명 */
+    .note-top { display: flex; align-items: flex-start; gap: 8px; }
+    .badge {
+      flex: none; font-size: 12px; font-weight: 600; line-height: 1;
+      padding: 5px 8px; border-radius: 999px; margin-top: 2px;
+      background: rgba(52, 199, 89, 0.15); color: var(--green);
+    }
+    .badge.t-암기 { background: rgba(175, 82, 222, 0.15); color: #af52de; }
+    .badge.t-시험 { background: rgba(255, 59, 48, 0.14); color: var(--red); }
+    .badge.t-질문 { background: rgba(255, 149, 0, 0.16); color: #ff9500; }
+    .badge.t-예시 { background: rgba(0, 122, 255, 0.13); color: var(--blue); }
+    .note-text { font-weight: 600; }
+    .note-context { font-size: 13px; color: var(--text2); margin-top: 4px; }
+    .note-explain {
+      font-size: 15px; margin-top: 8px; padding: 10px 12px;
+      background: var(--bg); border-radius: 12px; line-height: 1.55;
+    }
+
+    /* 그림 탭: AI가 다시 그린 모식도 */
+    .figure-card { margin-bottom: 14px; opacity: 0; animation: rise 0.6s var(--spring) forwards; }
+    .figure-card .fig-img {
+      display: block; width: 100%; background: #ffffff;   /* 다크 모드에서도 그림은 흰 바탕 */
+      border-bottom: 0.5px solid var(--line);
+    }
+    .figure-card .fig-body { padding: 14px 16px 16px; }
+    .figure-card .fig-title { font-size: 17px; font-weight: 600; }
+    .figure-card .fig-caption { font-size: 15px; color: var(--text2); margin-top: 4px; line-height: 1.5; }
+    .empty-card { padding: 16px; color: var(--text2); }
+
     .panel { display: none; }
     .panel.show { display: block; }
 
@@ -264,8 +293,9 @@
       <div class="segmented" id="segmented">
         <div class="seg-pill" id="segPill"></div>
         <button class="active" data-tab="0">요약</button>
-        <button data-tab="1">내 필기</button>
-        <button data-tab="2">밑줄·형광펜</button>
+        <button data-tab="1">필기</button>
+        <button data-tab="2">강조</button>
+        <button data-tab="3">그림</button>
       </div>
 
       <div class="panel show" data-panel="0">
@@ -279,6 +309,10 @@
       <div class="panel" data-panel="2">
         <div class="section-head"><span class="dot" style="background:var(--yellow)"></span>밑줄·형광펜 친 부분</div>
         <ul class="card list marker" id="highlightsList"></ul>
+      </div>
+      <div class="panel" data-panel="3">
+        <div class="section-head"><span class="dot" style="background:#af52de"></span>그림 모식도</div>
+        <div id="figuresList"></div>
       </div>
 
       <div class="actions">
@@ -304,10 +338,29 @@
       $("navbar").classList.toggle("scrolled", window.scrollY > 40);
     });
 
+    // ---- 진동(햅틱) ----
+    // 안드로이드: navigator.vibrate 사용
+    // 아이폰(iOS 18 이상): 진동 API가 없어서, 스위치를 누를 때 나는 햅틱을 몰래 빌려 씀
+    // 아이패드: 진동 모터가 없어서 진동 없음
+    function haptic(pattern = 30) {
+      if (navigator.vibrate) { navigator.vibrate(pattern); return; }
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.setAttribute("switch", "");
+      label.appendChild(input);
+      label.style.display = "none";
+      document.body.appendChild(label);
+      label.click();
+      label.remove();
+    }
+    $("cameraBtn").closest("label").addEventListener("click", () => haptic(15));
+
     // ---- 사진을 고르거나 찍으면 실행 ----
     photoInput.addEventListener("change", async () => {
       const file = photoInput.files[0];
       if (!file) return;
+      haptic(40);   // 사진이 들어오면 진동
 
       // 1) 미리보기 + 스캔 애니메이션 시작
       $("preview").src = URL.createObjectURL(file);
@@ -333,13 +386,16 @@
         // 4) 결과 채우기
         lastResult = data;
         fillList("summaryList", data.summary);
-        fillList("notesList", data.notes);
+        fillNotes(data.notes);
         fillList("highlightsList", data.highlights, true);
+        fillFigures(data.figures);
         switchTab(0);
         $("result").classList.add("show");
         $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+        haptic([20, 60, 20]);   // 완료되면 짧게 두 번
         showToast("정리 완료 ✓");
       } catch (err) {
+        haptic([60, 40, 60]);
         showToast("오류: " + err.message, true);
       } finally {
         $("previewCard").classList.remove("scanning");
@@ -370,6 +426,81 @@
       });
     }
 
+    // ---- 필기 목록 채우기 (원문 + 종류 + 위치 + 보충 설명) ----
+    function fillNotes(notes) {
+      const ul = $("notesList");
+      ul.innerHTML = "";
+      if (!notes || notes.length === 0) { fillList("notesList", []); return; }
+      notes.forEach((n, i) => {
+        if (typeof n === "string") n = { text: n };   // 예전 형식도 처리
+        const li = document.createElement("li");
+        li.style.animationDelay = (i * 60) + "ms";
+
+        const top = document.createElement("div");
+        top.className = "note-top";
+        if (n.type) {
+          const badge = document.createElement("span");
+          badge.className = "badge t-" + n.type.split(" ")[0];
+          badge.textContent = n.type;
+          top.appendChild(badge);
+        }
+        const text = document.createElement("span");
+        text.className = "note-text";
+        text.textContent = n.text || "";
+        top.appendChild(text);
+        li.appendChild(top);
+
+        if (n.context) {
+          const ctx = document.createElement("div");
+          ctx.className = "note-context";
+          ctx.textContent = "📍 " + n.context;
+          li.appendChild(ctx);
+        }
+        if (n.explain) {
+          const ex = document.createElement("div");
+          ex.className = "note-explain";
+          ex.textContent = n.explain;
+          li.appendChild(ex);
+        }
+        ul.appendChild(li);
+      });
+    }
+
+    // ---- 그림 모식도 채우기 ----
+    // AI가 만든 SVG를 <img>로 보여줌 → 혹시 SVG 안에 이상한 코드가 있어도 실행되지 않아 안전
+    function fillFigures(figures) {
+      const box = $("figuresList");
+      box.innerHTML = "";
+      if (!figures || figures.length === 0) {
+        box.innerHTML = '<div class="card empty-card">이 페이지에서 그림을 찾지 못했어요</div>';
+        return;
+      }
+      figures.forEach((f, i) => {
+        const card = document.createElement("div");
+        card.className = "card figure-card";
+        card.style.animationDelay = (i * 80) + "ms";
+
+        if (f.svg) {
+          const img = document.createElement("img");
+          img.className = "fig-img";
+          img.alt = f.title || "그림 모식도";
+          img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(f.svg);
+          card.appendChild(img);
+        }
+        const body = document.createElement("div");
+        body.className = "fig-body";
+        const title = document.createElement("div");
+        title.className = "fig-title";
+        title.textContent = f.title || "그림";
+        const cap = document.createElement("div");
+        cap.className = "fig-caption";
+        cap.textContent = f.caption || "";
+        body.append(title, cap);
+        card.appendChild(body);
+        box.appendChild(card);
+      });
+    }
+
     // ---- 세그먼트 탭 전환 (흰 알약이 미끄러지듯 이동) ----
     document.querySelectorAll("#segmented button").forEach((btn) => {
       btn.addEventListener("click", () => switchTab(Number(btn.dataset.tab)));
@@ -380,7 +511,7 @@
       document.querySelectorAll(".panel").forEach((p, i) => {
         p.classList.toggle("show", i === n);
         if (i === n) {  // 탭을 바꿀 때마다 항목 애니메이션을 다시 재생
-          p.querySelectorAll("li").forEach((li) => {
+          p.querySelectorAll("li, .figure-card").forEach((li) => {
             li.style.animation = "none"; void li.offsetWidth; li.style.animation = "";
           });
         }
@@ -393,8 +524,10 @@
       const section = (title, arr) => `[${title}]\n` + (arr || []).map((s) => "• " + s).join("\n");
       const text = [
         section("교과서 핵심 요약", lastResult.summary),
-        section("내 필기", lastResult.notes),
+        section("내 필기", (lastResult.notes || []).map((n) =>
+          typeof n === "string" ? n : `${n.type ? "[" + n.type + "] " : ""}${n.text}${n.explain ? " → " + n.explain : ""}`)),
         section("밑줄·형광펜", lastResult.highlights),
+        section("그림", (lastResult.figures || []).map((f) => `${f.title}: ${f.caption}`)),
       ].join("\n\n");
       try {
         await navigator.clipboard.writeText(text);
