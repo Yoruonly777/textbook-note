@@ -7,8 +7,15 @@
 // 이 주소에서 온 요청만 받는다 (다른 사이트가 우리 서버를 몰래 쓰는 것 방지)
 const ALLOWED_ORIGIN = "https://yoruonly777.github.io";
 
-// 사용할 Gemini 모델 ("최신 Flash 모델"을 자동으로 가리키는 이름)
-const MODEL = "gemini-flash-latest";
+// 사용할 Gemini 모델 목록 (앞에서부터 시도)
+// 첫 모델이 바쁘거나(503) 사용량이 몰리면(429) 잠깐 쉬었다 다시 시도하고,
+// 그래도 안 되면 다음 모델로 넘어간다.
+const MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash"];
+const TRIES_PER_MODEL = 2;
+
+// 다시 시도해 볼 만한 오류인지 (바쁨, 사용량 초과, 서버 오류, 모델 없음)
+const RETRYABLE = [404, 429, 500, 502, 503, 504];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Gemini에게 하는 부탁 (프롬프트) — 결과가 마음에 안 들면 여기를 고치면 된다
 const PROMPT = `
@@ -92,38 +99,55 @@ export default {
     const keepAlive = setInterval(() => writer.write(encoder.encode(" ")).catch(() => {}), 5000);
 
     const work = (async () => {
-      let result;
+      let result = "";
       try {
-        // 3) Gemini에 사진 + 부탁 보내기
-        const geminiRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": env.GEMINI_API_KEY, // 숨겨둔 키를 여기서만 사용
-            },
-            body: JSON.stringify({
-              contents: [
-                {
-                  parts: [
-                    { inline_data: { mime_type: body.mimeType, data: body.image } },
-                    { text: PROMPT },
-                  ],
-                },
+        // 3) Gemini에 사진 + 부탁 보내기 (바쁘면 재시도, 그래도 안 되면 다음 모델)
+        const requestBody = JSON.stringify({
+          contents: [
+            {
+              parts: [
+                { inline_data: { mime_type: body.mimeType, data: body.image } },
+                { text: PROMPT },
               ],
-              generationConfig: { responseMimeType: "application/json" },
-            }),
-          }
-        );
-        const data = await geminiRes.json();
+            },
+          ],
+          generationConfig: { responseMimeType: "application/json" },
+        });
 
-        if (!geminiRes.ok) {
-          result = JSON.stringify({ error: data.error?.message || "Gemini 오류" });
-        } else {
-          // 4) Gemini 답에서 글자 부분만 꺼내기 (생각 과정 부분은 제외)
-          const parts = data.candidates?.[0]?.content?.parts || [];
-          result = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("") || "{}";
+        let lastError = "Gemini 오류";
+        let busy = true; // 바빠서 실패한 건지, 다른 이유(키 오류 등)인지
+        outer: for (const model of MODELS) {
+          for (let attempt = 1; attempt <= TRIES_PER_MODEL; attempt++) {
+            const geminiRes = await fetch(
+              `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+              {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": env.GEMINI_API_KEY, // 숨겨둔 키를 여기서만 사용
+                },
+                body: requestBody,
+              }
+            );
+            const data = await geminiRes.json().catch(() => ({}));
+
+            if (geminiRes.ok) {
+              // 4) Gemini 답에서 글자 부분만 꺼내기 (생각 과정 부분은 제외)
+              const parts = data.candidates?.[0]?.content?.parts || [];
+              result = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("") || "{}";
+              break outer;
+            }
+
+            lastError = data.error?.message || `Gemini 오류 (${geminiRes.status})`;
+            if (!RETRYABLE.includes(geminiRes.status)) { busy = false; break outer; } // 키 오류 등은 재시도해도 소용없음
+            if (geminiRes.status === 404) break;                     // 모델 이름이 없으면 바로 다음 모델로
+            if (attempt < TRIES_PER_MODEL) await sleep(2000 * attempt);
+          }
+        }
+        if (!result) {
+          result = JSON.stringify({
+            error: busy ? "지금 AI 서버가 바빠요. 1~2분 뒤 다시 찍어 주세요." : lastError,
+          });
         }
       } catch (err) {
         result = JSON.stringify({ error: err.message });
