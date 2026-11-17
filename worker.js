@@ -51,7 +51,7 @@ const PROMPT = `
 `;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     // 브라우저 보안 규칙(CORS)에 필요한 정보
     const corsHeaders = {
       "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
@@ -71,53 +71,73 @@ export default {
       });
     }
 
+    // 1) 웹 화면이 보낸 사진 받기 { image: "base64 문자열", mimeType: "image/jpeg" }
+    let body;
     try {
-      // 1) 웹 화면이 보낸 사진 받기 { image: "base64 문자열", mimeType: "image/jpeg" }
-      const { image, mimeType } = await request.json();
-
-      // 2) Gemini에 사진 + 부탁 보내기
-      const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": env.GEMINI_API_KEY, // 숨겨둔 키를 여기서만 사용
-          },
-          body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { inline_data: { mime_type: mimeType, data: image } },
-                  { text: PROMPT },
-                ],
-              },
-            ],
-            generationConfig: { responseMimeType: "application/json" },
-          }),
-        }
-      );
-
-      const data = await geminiRes.json();
-
-      if (!geminiRes.ok) {
-        return new Response(JSON.stringify({ error: data.error?.message || "Gemini 오류" }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // 3) Gemini 답에서 글자 부분만 꺼내 웹 화면으로 돌려주기
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
-
-      return new Response(text, {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    } catch (err) {
-      return new Response(JSON.stringify({ error: err.message }), {
-        status: 500,
+      body = await request.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "사진 데이터를 읽지 못했어요" }), {
+        status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // 2) 응답을 "흘려보내는(stream)" 통로를 먼저 열어 두기
+    //    AI가 오래 생각하면 Cloudflare가 약 100초 뒤 연결을 끊는다(오류 524).
+    //    그래서 바로 응답을 시작하고, 기다리는 동안 5초마다 공백 한 칸을 보내
+    //    "아직 작업 중"이라고 알린다. (JSON 앞의 공백은 읽을 때 무시된다)
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const encoder = new TextEncoder();
+    const keepAlive = setInterval(() => writer.write(encoder.encode(" ")).catch(() => {}), 5000);
+
+    const work = (async () => {
+      let result;
+      try {
+        // 3) Gemini에 사진 + 부탁 보내기
+        const geminiRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": env.GEMINI_API_KEY, // 숨겨둔 키를 여기서만 사용
+            },
+            body: JSON.stringify({
+              contents: [
+                {
+                  parts: [
+                    { inline_data: { mime_type: body.mimeType, data: body.image } },
+                    { text: PROMPT },
+                  ],
+                },
+              ],
+              generationConfig: { responseMimeType: "application/json" },
+            }),
+          }
+        );
+        const data = await geminiRes.json();
+
+        if (!geminiRes.ok) {
+          result = JSON.stringify({ error: data.error?.message || "Gemini 오류" });
+        } else {
+          // 4) Gemini 답에서 글자 부분만 꺼내기 (생각 과정 부분은 제외)
+          const parts = data.candidates?.[0]?.content?.parts || [];
+          result = parts.filter((p) => p.text && !p.thought).map((p) => p.text).join("") || "{}";
+        }
+      } catch (err) {
+        result = JSON.stringify({ error: err.message });
+      }
+      clearInterval(keepAlive);
+      await writer.write(encoder.encode(result));
+      await writer.close();
+    })();
+
+    // 응답이 끝날 때까지 작업이 중간에 멈추지 않게 한다
+    ctx.waitUntil(work);
+
+    return new Response(readable, {
+      headers: { ...corsHeaders, "Content-Type": "application/json; charset=utf-8" },
+    });
   },
 };
