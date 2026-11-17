@@ -1,0 +1,5 @@
+# Cloudflare Workers 설정 (GitHub 연결 자동 배포용)
+# name은 Cloudflare에 만든 Worker 이름과 같아야 한다.
+name = "textbook-work"
+main = "worker.js"
+compatibility_date = "2025-01-01"
