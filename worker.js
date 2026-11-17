@@ -116,6 +116,7 @@ export default {
 
         let lastError = "Gemini 오류";
         let busy = true; // 바빠서 실패한 건지, 다른 이유(키 오류 등)인지
+        const tried = []; // 어떤 모델이 어떤 오류로 실패했는지 기록 (원인 확인용)
         outer: for (const model of MODELS) {
           for (let attempt = 1; attempt <= TRIES_PER_MODEL; attempt++) {
             const geminiRes = await fetch(
@@ -139,6 +140,7 @@ export default {
             }
 
             lastError = data.error?.message || `Gemini 오류 (${geminiRes.status})`;
+            tried.push(`${model} ${geminiRes.status}`);
             if (!RETRYABLE.includes(geminiRes.status)) { busy = false; break outer; } // 키 오류 등은 재시도해도 소용없음
             if (geminiRes.status === 404) break;                     // 모델 이름이 없으면 바로 다음 모델로
             if (attempt < TRIES_PER_MODEL) await sleep(2000 * attempt);
@@ -146,7 +148,9 @@ export default {
         }
         if (!result) {
           result = JSON.stringify({
-            error: busy ? "지금 AI 서버가 바빠요. 1~2분 뒤 다시 찍어 주세요." : lastError,
+            error: busy
+              ? "지금 AI 서버가 바빠요. 잠시 뒤 다시 찍어 주세요. [" + tried.join(", ") + "]"
+              : lastError,
           });
         }
       } catch (err) {
