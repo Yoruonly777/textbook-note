@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>찍정 - 찍으면 정리되는 교과서</title>
+
+  <!-- ===================== CSS: 화면 꾸미기 (iOS 스타일) ===================== -->
+  <style>
+    /* ---- 색상 모음 (라이트 모드) ---- */
+    :root {
+      --bg: #f2f2f7;            /* iOS 기본 회색 배경 */
+      --card: #ffffff;
+      --text: #000000;
+      --text2: #8e8e93;         /* 보조 글자색 */
+      --line: rgba(60, 60, 67, 0.12);
+      --blue: #007aff;
+      --green: #34c759;
+      --yellow: #ffcc00;
+      --red: #ff3b30;
+      --seg-bg: rgba(118, 118, 128, 0.12);
+      --seg-pill: #ffffff;
+      --bar: rgba(242, 242, 247, 0.75);
+      --spring: cubic-bezier(0.32, 0.72, 0, 1);  /* iOS 느낌의 부드러운 움직임 */
+    }
+    /* ---- 다크 모드 (폰 설정이 다크면 자동 적용) ---- */
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --card: #1c1c1e;
+        --text: #ffffff;
+        --text2: #8e8e93;
+        --line: rgba(84, 84, 88, 0.6);
+        --blue: #0a84ff;
+        --green: #30d158;
+        --yellow: #ffd60a;
+        --red: #ff453a;
+        --seg-bg: rgba(118, 118, 128, 0.24);
+        --seg-pill: #636366;
+        --bar: rgba(0, 0, 0, 0.7);
+      }
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo",
+                   "Pretendard", "Malgun Gothic", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.01em;
+    }
+
+    /* ---- 상단 반투명 바 (스크롤하면 작은 제목이 나타남) ---- */
+    .navbar {
+      position: sticky; top: 0; z-index: 10;
+      height: calc(44px + env(safe-area-inset-top));
+      padding-top: env(safe-area-inset-top);
+      display: flex; align-items: center; justify-content: center;
+      background: transparent;
+      transition: background 0.3s, border-color 0.3s;
+      border-bottom: 0.5px solid transparent;
+    }
+    .navbar.scrolled {
+      background: var(--bar);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      backdrop-filter: saturate(180%) blur(20px);
+      border-bottom-color: var(--line);
+    }
+    .navbar .small-title {
+      font-size: 17px; font-weight: 600;
+      opacity: 0; transform: translateY(6px);
+      transition: opacity 0.25s, transform 0.35s var(--spring);
+    }
+    .navbar.scrolled .small-title { opacity: 1; transform: none; }
+
+    .wrap { max-width: 600px; margin: 0 auto; padding: 0 16px 60px; }
+
+    /* ---- 큰 제목 ---- */
+    .large-title { font-size: 34px; font-weight: 700; letter-spacing: -0.02em; margin: 4px 4px 2px; }
+    .subtitle { color: var(--text2); font-size: 15px; margin: 0 4px 22px; }
+
+    /* ---- 공통 카드 ---- */
+    .card {
+      background: var(--card);
+      border-radius: 20px;
+      overflow: hidden;
+    }
+
+    /* ---- 사진 찍기 카드 ---- */
+    .camera-card {
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+      padding: 30px 20px 24px;
+      cursor: pointer;
+      transition: transform 0.4s var(--spring);
+      animation: rise 0.7s var(--spring) both;
+    }
+    .camera-card:active { transform: scale(0.97); }
+    .camera-icon {
+      width: 64px; height: 64px; border-radius: 18px;
+      background: linear-gradient(180deg, #4da3ff, var(--blue));
+      display: grid; place-items: center;
+      box-shadow: 0 8px 20px rgba(0, 122, 255, 0.3);
+    }
+    .camera-icon svg { width: 32px; height: 32px; }
+    .camera-card .label { font-size: 17px; font-weight: 600; }
+    .camera-card .hint { font-size: 13px; color: var(--text2); margin-top: -8px; }
+    .pill-btn {
+      background: var(--blue); color: white;
+      font-size: 17px; font-weight: 600;
+      padding: 13px 28px; border-radius: 999px; border: none;
+      transition: transform 0.3s var(--spring), opacity 0.2s;
+    }
+    #photoInput { display: none; }
+
+    /* ---- 사진 미리보기 + 스캔 애니메이션 ---- */
+    .preview-card {
+      position: relative; margin-top: 16px;
+      display: none;
+      animation: rise 0.6s var(--spring) both;
+    }
+    .preview-card img { display: block; width: 100%; max-height: 380px; object-fit: cover; }
+    .scan-line {
+      position: absolute; left: 0; right: 0; height: 90px; top: -90px;
+      background: linear-gradient(180deg, transparent, rgba(0, 122, 255, 0.35), transparent);
+      display: none;
+    }
+    .preview-card.scanning .scan-line { display: block; animation: scan 1.8s ease-in-out infinite; }
+    .preview-card.scanning img { filter: saturate(0.6) brightness(0.95); transition: filter 0.4s; }
+
+    /* ---- 진행 상태 ---- */
+    .status {
+      display: none; align-items: center; justify-content: center; gap: 10px;
+      color: var(--text2); font-size: 15px; margin: 18px 0 4px;
+    }
+    .status.show { display: flex; animation: fade 0.4s both; }
+    .spinner {
+      width: 18px; height: 18px; border-radius: 50%;
+      border: 2.5px solid var(--line); border-top-color: var(--text2);
+      animation: spin 0.8s linear infinite;
+    }
+
+    /* ---- 세그먼트 탭 (요약 / 필기 / 강조) ---- */
+    .result { display: none; margin-top: 22px; }
+    .result.show { display: block; }
+    .segmented {
+      position: relative; display: grid; grid-template-columns: repeat(3, 1fr);
+      background: var(--seg-bg); border-radius: 10px; padding: 2px;
+      animation: rise 0.6s var(--spring) both;
+    }
+    .segmented button {
+      position: relative; z-index: 1;
+      border: none; background: none; color: var(--text);
+      font-size: 13px; font-weight: 500; padding: 7px 0;
+      font-family: inherit; cursor: pointer;
+      transition: font-weight 0.2s;
+    }
+    .segmented button.active { font-weight: 600; }
+    .seg-pill {
+      position: absolute; top: 2px; bottom: 2px; left: 2px;
+      width: calc((100% - 4px) / 3);
+      background: var(--seg-pill); border-radius: 8px;
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 3px 1px rgba(0, 0, 0, 0.04);
+      transition: transform 0.45s var(--spring);
+    }
+
+    /* ---- 결과 목록 (iOS 설정 앱 같은 리스트) ---- */
+    .section-head {
+      font-size: 13px; color: var(--text2); text-transform: uppercase;
+      margin: 22px 16px 7px; display: flex; align-items: center; gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .list { list-style: none; margin: 0; padding: 0; }
+    .list li {
+      position: relative;
+      padding: 13px 16px; font-size: 16px; line-height: 1.5;
+      opacity: 0; transform: translateY(14px);
+      animation: rise 0.55s var(--spring) forwards;
+    }
+    .list li + li::before {   /* 항목 사이 얇은 구분선 */
+      content: ""; position: absolute; top: 0; left: 16px; right: 0;
+      border-top: 0.5px solid var(--line);
+    }
+    .list li.empty { color: var(--text2); }
+    /* 강조 탭: 형광펜 효과 */
+    .list.marker li span {
+      background: linear-gradient(transparent 55%, rgba(255, 204, 0, 0.45) 55%);
+      border-radius: 2px;
+    }
+    .panel { display: none; }
+    .panel.show { display: block; }
+
+    /* ---- 아래 버튼들 ---- */
+    .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 22px; }
+    .action-btn {
+      border: none; border-radius: 14px; padding: 14px;
+      font-size: 16px; font-weight: 600; font-family: inherit; cursor: pointer;
+      background: var(--card); color: var(--blue);
+      transition: transform 0.35s var(--spring), opacity 0.2s;
+    }
+    .action-btn:active, .pill-btn:active { transform: scale(0.95); opacity: 0.8; }
+
+    /* ---- 아래에서 올라오는 알림 (토스트) ---- */
+    .toast {
+      position: fixed; left: 50%; bottom: calc(30px + env(safe-area-inset-bottom));
+      transform: translate(-50%, 120px);
+      background: rgba(30, 30, 30, 0.85); color: white;
+      -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+      padding: 12px 20px; border-radius: 999px; font-size: 15px; font-weight: 500;
+      transition: transform 0.5s var(--spring);
+      z-index: 20; white-space: nowrap;
+    }
+    .toast.show { transform: translate(-50%, 0); }
+    .toast.error { background: rgba(255, 59, 48, 0.92); }
+
+    /* ---- 애니메이션 정의 ---- */
+    @keyframes rise { from { opacity: 0; transform: translateY(18px) scale(0.98); }
+                      to   { opacity: 1; transform: none; } }
+    @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes scan { 0% { top: -90px; } 100% { top: 100%; } }
+
+    /* 움직임 줄이기 설정을 켠 사용자는 애니메이션 최소화 */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ===================== HTML: 화면 구성 ===================== -->
+  <nav class="navbar" id="navbar"><span class="small-title">찍정</span></nav>
+
+  <div class="wrap">
+    <h1 class="large-title">찍정</h1>
+    <p class="subtitle">찍으면 정리되는 교과서</p>
+
+    <!-- 사진 찍기 카드: 누르면 휴대폰에서는 카메라, 컴퓨터에서는 파일 선택이 열림 -->
+    <label class="card camera-card" for="photoInput">
+      <div class="camera-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.6l1.4-2h7l1.4 2h1.6A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>
+          <circle cx="12" cy="13" r="3.5"/>
+        </svg>
+      </div>
+      <div class="label">교과서 페이지를 찍어 주세요</div>
+      <div class="hint">필기·밑줄·형광펜까지 한 번에 정리해요</div>
+      <span class="pill-btn" id="cameraBtn">사진 찍기</span>
+    </label>
+    <input type="file" id="photoInput" accept="image/*" capture="environment">
+
+    <!-- 사진 미리보기 (분석 중에는 파란 스캔 줄이 지나감) -->
+    <div class="card preview-card" id="previewCard">
+      <img id="preview" alt="찍은 교과서 사진">
+      <div class="scan-line"></div>
+    </div>
+
+    <div class="status" id="status"><div class="spinner"></div><span>AI가 정리하는 중이에요</span></div>
+
+    <!-- 결과 -->
+    <div class="result" id="result">
+      <div class="segmented" id="segmented">
+        <div class="seg-pill" id="segPill"></div>
+        <button class="active" data-tab="0">요약</button>
+        <button data-tab="1">내 필기</button>
+        <button data-tab="2">밑줄·형광펜</button>
+      </div>
+
+      <div class="panel show" data-panel="0">
+        <div class="section-head"><span class="dot" style="background:var(--blue)"></span>교과서 핵심 요약</div>
+        <ul class="card list" id="summaryList"></ul>
+      </div>
+      <div class="panel" data-panel="1">
+        <div class="section-head"><span class="dot" style="background:var(--green)"></span>내가 쓴 필기</div>
+        <ul class="card list" id="notesList"></ul>
+      </div>
+      <div class="panel" data-panel="2">
+        <div class="section-head"><span class="dot" style="background:var(--yellow)"></span>밑줄·형광펜 친 부분</div>
+        <ul class="card list marker" id="highlightsList"></ul>
+      </div>
+
+      <div class="actions">
+        <button class="action-btn" id="copyBtn">전체 복사</button>
+        <button class="action-btn" id="againBtn">다시 찍기</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- ===================== JavaScript: 동작 ===================== -->
+  <script>
+    // 우리 중간 서버(Cloudflare Worker) 주소
+    const SERVER_URL = "https://textbook-work.jangjunus0825.workers.dev/";
+
+    const $ = (id) => document.getElementById(id);
+    const photoInput = $("photoInput");
+    let lastResult = null;   // 복사 기능에 쓰려고 마지막 결과를 기억
+
+    // ---- 스크롤하면 상단바가 반투명해지고 작은 제목이 나타남 ----
+    window.addEventListener("scroll", () => {
+      $("navbar").classList.toggle("scrolled", window.scrollY > 40);
+    });
+
+    // ---- 사진을 고르거나 찍으면 실행 ----
+    photoInput.addEventListener("change", async () => {
+      const file = photoInput.files[0];
+      if (!file) return;
+
+      // 1) 미리보기 + 스캔 애니메이션 시작
+      $("preview").src = URL.createObjectURL(file);
+      $("previewCard").style.display = "block";
+      $("previewCard").classList.add("scanning");
+      $("result").classList.remove("show");
+      $("status").classList.add("show");
+      $("previewCard").scrollIntoView({ behavior: "smooth", block: "start" });
+
+      try {
+        // 2) 사진 크기 줄이기 (휴대폰 사진은 너무 커서 전송이 느림)
+        const base64 = await shrinkImage(file, 1600);
+
+        // 3) 서버로 사진 보내기
+        const res = await fetch(SERVER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64, mimeType: "image/jpeg" }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        // 4) 결과 채우기
+        lastResult = data;
+        fillList("summaryList", data.summary);
+        fillList("notesList", data.notes);
+        fillList("highlightsList", data.highlights, true);
+        switchTab(0);
+        $("result").classList.add("show");
+        $("result").scrollIntoView({ behavior: "smooth", block: "start" });
+        showToast("정리 완료 ✓");
+      } catch (err) {
+        showToast("오류: " + err.message, true);
+      } finally {
+        $("previewCard").classList.remove("scanning");
+        $("status").classList.remove("show");
+        photoInput.value = "";   // 같은 사진을 다시 골라도 동작하게 초기화
+      }
+    });
+
+    // ---- 목록 채우기 (항목이 하나씩 차례로 올라오는 애니메이션) ----
+    function fillList(id, items, marker = false) {
+      const ul = $(id);
+      ul.innerHTML = "";
+      if (!items || items.length === 0) items = [null];
+      items.forEach((item, i) => {
+        const li = document.createElement("li");
+        li.style.animationDelay = (i * 60) + "ms";
+        if (item === null) {
+          li.className = "empty";
+          li.textContent = "찾은 내용이 없어요";
+        } else if (marker) {
+          const span = document.createElement("span");
+          span.textContent = item;
+          li.appendChild(span);
+        } else {
+          li.textContent = item;
+        }
+        ul.appendChild(li);
+      });
+    }
+
+    // ---- 세그먼트 탭 전환 (흰 알약이 미끄러지듯 이동) ----
+    document.querySelectorAll("#segmented button").forEach((btn) => {
+      btn.addEventListener("click", () => switchTab(Number(btn.dataset.tab)));
+    });
+    function switchTab(n) {
+      $("segPill").style.transform = `translateX(${n * 100}%)`;
+      document.querySelectorAll("#segmented button").forEach((b, i) => b.classList.toggle("active", i === n));
+      document.querySelectorAll(".panel").forEach((p, i) => {
+        p.classList.toggle("show", i === n);
+        if (i === n) {  // 탭을 바꿀 때마다 항목 애니메이션을 다시 재생
+          p.querySelectorAll("li").forEach((li) => {
+            li.style.animation = "none"; void li.offsetWidth; li.style.animation = "";
+          });
+        }
+      });
+    }
+
+    // ---- 전체 복사 ----
+    $("copyBtn").addEventListener("click", async () => {
+      if (!lastResult) return;
+      const section = (title, arr) => `[${title}]\n` + (arr || []).map((s) => "• " + s).join("\n");
+      const text = [
+        section("교과서 핵심 요약", lastResult.summary),
+        section("내 필기", lastResult.notes),
+        section("밑줄·형광펜", lastResult.highlights),
+      ].join("\n\n");
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("복사했어요");
+      } catch {
+        showToast("복사하지 못했어요", true);
+      }
+    });
+
+    // ---- 다시 찍기 ----
+    $("againBtn").addEventListener("click", () => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      setTimeout(() => photoInput.click(), 350);
+    });
+
+    // ---- 아래에서 올라오는 알림 ----
+    let toastTimer;
+    function showToast(msg, isError = false) {
+      const t = $("toast");
+      t.textContent = msg;
+      t.classList.toggle("error", isError);
+      t.classList.add("show");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => t.classList.remove("show"), isError ? 4000 : 2000);
+    }
+
+    // ---- 사진의 긴 쪽을 maxSize 픽셀로 줄이고 base64 글자로 바꾸기 ----
+    function shrinkImage(file, maxSize) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width * scale;
+          canvas.height = img.height * scale;
+          canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/jpeg", 0.85).split(",")[1]);
+        };
+        img.onerror = () => reject(new Error("사진을 읽을 수 없어요"));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+  </script>
+</body>
+</html>
